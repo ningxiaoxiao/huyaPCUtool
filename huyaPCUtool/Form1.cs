@@ -10,6 +10,7 @@ using System.Linq;
 using System.Resources;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using HttpHelpers;
@@ -44,7 +45,7 @@ namespace huyaPCUtool
             // getallup();
 
 
-            timer = new Timer(20000);
+            timer = new Timer(40000);
             timer.Elapsed += Timer_Elapsed;
             timer.Start();
 
@@ -80,6 +81,11 @@ namespace huyaPCUtool
             logger.Info("ms={0}", ms.Count);
 
             var ts = Spider.ConvertDateTimeInt(DateTime.Now);
+
+            var totalcount = 0;
+
+            var rs = new List<rec>();
+
             foreach (Match m in ms)
             {
                 var url = m.Groups[2].ToString();
@@ -100,15 +106,27 @@ namespace huyaPCUtool
 
                 r.activitycount = Spider.Between(room, "<div id=\"activityCount\">", "<");
                 r.livecount = Spider.Between(room, "id=\"live-count\">", "<");
+                r.livecount = r.livecount.Replace(",", "");
 
 
-                Form1.Cmd(
-                  $"INSERT into rec " +
-                  $"(roomid,title,nick,timesamp,livecount,activityCount)" +
-                  $"values" +
-                  $"('{r.roomid}','{r.title}','{r.nick}','{r.timesamp}','{r.livecount}','{r.activitycount}')",
-                  tran);
+                totalcount += int.Parse(r.livecount);
+
+
+                rs.Add(r);
+
             }
+
+            foreach (var r in rs)
+            {
+                Form1.Cmd(
+             $"INSERT into rec " +
+             $"(roomid,title,nick,timesamp,livecount,activityCount,totalcount)" +
+             $"values" +
+             $"('{r.roomid}','{r.title}','{r.nick}','{r.timesamp}','{r.livecount}','{r.activitycount}','{totalcount}')",
+             tran);
+            }
+
+
 
             tran.Commit();
 
@@ -126,7 +144,7 @@ namespace huyaPCUtool
         private static void CreatSqlTable()
         {
 
-            Cmd("create table rec (no integer primary key,roomid varchar(20),title varchar(20),nick varchar(20),timesamp varchar(20),livecount varchar(20),activityCount varchar(20))");
+            Cmd("create table rec (no integer primary key,roomid varchar(20),title varchar(20),nick varchar(20),timesamp varchar(20),livecount varchar(20),activityCount varchar(20),totalcount varchar(20))");
 
         }
         private static void CheckSqlFile()
@@ -164,35 +182,63 @@ namespace huyaPCUtool
         public static DataTable GetSql(string sql, DataTable sdt = null)
         {
             var command = new SQLiteCommand(sql, _db);
-            var reader = command.ExecuteReader();
+
+            var da = new SQLiteDataAdapter(command);
+
 
             if (sdt == null)
             {
-                var dt = new DataTable();
+                sdt = new DataTable();
+            }
 
-                dt.Load(reader);
-                return dt;
-            }
-            else
-            {
-                sdt.Load(reader);
-                return sdt;
-            }
+            da.Fill(sdt);
+            return sdt;
+
+
 
 
         }
         private void button1_Click(object sender, EventArgs e)
         {
-            var dt = GetSql("SELECT * FROM rec where nick='暴走大世界'");
+
+
+            var t = new Thread(writefile);
+            t.Start();
+        }
+
+        private void writefile()
+        {
+            if (textBox1.Text == "")
+                return;
+
+
+            var dt = GetSql($"SELECT * FROM rec where nick='{textBox1.Text}'");
+
+
+
+            logger.Info("write temp start");
+            logger.Info("count=" + dt.Rows.Count);
             var str = "[";
+
+            var lastcount = "";
+
             foreach (DataRow r in dt.Rows)
             {
-                //str += $"['{r["timesamp"]}',{r["livecount"]},'{r["nick"]}',{r["activitycount"]}],";
-                str += $"['{r["timesamp"]}',{(r["livecount"].ToString()).Replace(",", "")},'{r["nick"]}',{r["activitycount"]}],";
+
+                //去重
+                var livecount = (r["livecount"].ToString()).Replace(",", "");
+                if (livecount != lastcount)
+                    str += $"['{r["timesamp"]}',{livecount},'{r["nick"]}',{r["activitycount"]}],";
             }
             str += "]";
-            Console.Out.WriteLine(str);
+            logger.Info("add done");
+
+            var fs = File.Create("tmep.txt");
+            var bs = Encoding.UTF8.GetBytes(str);
+            fs.Write(bs, 0, bs.Length);
+            logger.Info("write temp done");
         }
+
     }
 
     public struct rec
@@ -203,6 +249,7 @@ namespace huyaPCUtool
         public string timesamp;
         public string livecount;
         public string activitycount;
+        public string totalcount;
 
         public override string ToString()
         {
