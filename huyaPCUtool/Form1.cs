@@ -33,9 +33,8 @@ namespace huyaPCUtool
 
         }
 
-        List<Spider> spiders = new List<Spider>();
 
-
+        private object locker = new object();
         private Timer timer;
 
         private void Form1_Load(object sender, EventArgs e)
@@ -62,81 +61,99 @@ namespace huyaPCUtool
 
         public void getallup()
         {
-            var sw = new Stopwatch();
-            sw.Start();
 
-
-
-            var swr = sw.ElapsedMilliseconds;
-            var alluphtml = http.getHtml("http://www.huya.com/g/hw");
-
-            logger.Info("getallhtml time={0}", sw.ElapsedMilliseconds - swr);
-
-
-            var re = new Regex("game-live-item\">(\\s*?)<a href=\"([\\s\\S]*?)\" class=\"([\\s\\S]*?)' title=\"([\\s\\S]*?)\" target=\"([\\s\\S]*?)nick\" title=\"([\\s\\S]*?)\">([\\s\\S]*?)\"js-num\">([\\s\\S]*?)<");
-            var ms = re.Matches(alluphtml);
-            var tran = _db.BeginTransaction();
-
-            //2 4 6 8
-            logger.Info("ms={0}", ms.Count);
-
-            var ts = Spider.ConvertDateTimeInt(DateTime.Now);
-
-            var totalcount = 0;
-
-            var rs = new List<rec>();
-
-            foreach (Match m in ms)
+            lock (logger)
             {
-                var url = m.Groups[2].ToString();
-                url += "*";
-                var r = new rec()
+                var sw = new Stopwatch();
+                sw.Start();
+
+
+
+                var swr = sw.ElapsedMilliseconds;
+                var alluphtml = http.getHtml("http://www.huya.com/g/hw");
+
+                //logger.Info("getallhtml time={0}", sw.ElapsedMilliseconds - swr);
+
+
+                var re = new Regex("game-live-item\">(\\s*?)<a href=\"([\\s\\S]*?)\" class=\"([\\s\\S]*?)' title=\"([\\s\\S]*?)\" target=\"([\\s\\S]*?)nick\" title=\"([\\s\\S]*?)\">([\\s\\S]*?)\"js-num\">([\\s\\S]*?)<");
+                var ms = re.Matches(alluphtml);
+
+
+
+                //2 4 6 8
+                // logger.Info("ms={0}", ms.Count);
+
+                var ts = Spider.ConvertDateTimeInt(DateTime.Now);
+
+                var totalcount = 0;
+
+                var rs = new List<rec>();
+
+                foreach (Match m in ms)
                 {
-                    roomid = Spider.Between(url, "com/", "*"),
-                    title = m.Groups[4].ToString(),
-                    nick = m.Groups[6].ToString(),
-                    timesamp = ts,
+                    var url = m.Groups[2].ToString();
+                    url += "*";
+                    var r = new rec()
+                    {
+                        roomid = Spider.Between(url, "com/", "*"),
+                        title = m.Groups[4].ToString(),
+                        nick = m.Groups[6].ToString(),
+                        timesamp = ts,
 
-                };
-
-
-                //得到新的数字
-
-                var room = http.getHtml(m.Groups[2].ToString());
-
-                r.activitycount = Spider.Between(room, "<div id=\"activityCount\">", "<");
-                r.livecount = Spider.Between(room, "id=\"live-count\">", "<");
-                r.livecount = r.livecount.Replace(",", "");
+                    };
 
 
-                totalcount += int.Parse(r.livecount);
+                    //得到新的数字
+
+                    var room = http.getHtml(m.Groups[2].ToString());
+
+                    r.activitycount = Spider.Between(room, "<div id=\"activityCount\">", "<");
+                    r.livecount = Spider.Between(room, "id=\"live-count\">", "<");
+                    r.livecount = r.livecount.Replace(",", "");
 
 
-                rs.Add(r);
+                    totalcount += int.Parse(r.livecount);
 
+
+                    rs.Add(r);
+
+                }
+
+                var tran = _db.BeginTransaction();
+
+                try
+                {
+                    foreach (var r in rs)
+                    {
+                        var c = Cmd(
+                     $"INSERT into rec " +
+                     $"(roomid,title,nick,timesamp,livecount,activityCount,totalcount)" +
+                     $"values" +
+                     $"('{r.roomid}','{r.title.Replace("'", "")}','{r.nick}','{r.timesamp}','{r.livecount}','{r.activitycount}','{totalcount}')",
+                     tran
+                     );
+                    }
+                    tran.Commit();
+
+                }
+                catch (Exception ex)
+                {
+                    logger.Error("写入数据库错误:" + ex);
+                }
+
+
+
+
+                sw.Stop();
+
+                label4.Text = sw.Elapsed.TotalSeconds + " S";
+                label6.Text = ms.Count.ToString();
+
+
+                logger.Info("count={0}, time={1}s done", ms.Count, sw.Elapsed.TotalSeconds);
             }
 
-            foreach (var r in rs)
-            {
-                Form1.Cmd(
-             $"INSERT into rec " +
-             $"(roomid,title,nick,timesamp,livecount,activityCount,totalcount)" +
-             $"values" +
-             $"('{r.roomid}','{r.title}','{r.nick}','{r.timesamp}','{r.livecount}','{r.activitycount}','{totalcount}')",
-             tran);
-            }
 
-
-
-            tran.Commit();
-
-            sw.Stop();
-
-            label4.Text = sw.Elapsed.TotalSeconds + " S";
-            label6.Text = ms.Count.ToString();
-
-
-            logger.Info("count={0}, time={1}s done", ms.Count, sw.Elapsed.TotalSeconds);
 
         }
 
@@ -177,7 +194,19 @@ namespace huyaPCUtool
                 command.Transaction = tran;
             }
 
-            return command.ExecuteNonQuery();
+            var r = -1;
+
+            try
+            {
+                r = command.ExecuteNonQuery();
+            }
+            catch (Exception ex)
+            {
+
+                logger.Error(cmd + "\r\n" + ex);
+            }
+
+            return r;
         }
         public static DataTable GetSql(string sql, DataTable sdt = null)
         {
@@ -224,11 +253,11 @@ namespace huyaPCUtool
 
             foreach (DataRow r in dt.Rows)
             {
+                var livecount = (r["livecount"].ToString()).Replace(",", "");
 
                 //去重
-                var livecount = (r["livecount"].ToString()).Replace(",", "");
                 if (livecount != lastcount)
-                    str += $"['{r["timesamp"]}',{livecount},'{r["nick"]}',{r["activitycount"]}],";
+                    str += $"['{r["timesamp"]}',{livecount},'{r["nick"]}',{r["activitycount"]},{r["totalcount"]},'{r["title"]}'],";
             }
             str += "]";
             logger.Info("add done");
@@ -236,6 +265,7 @@ namespace huyaPCUtool
             var fs = File.Create("tmep.txt");
             var bs = Encoding.UTF8.GetBytes(str);
             fs.Write(bs, 0, bs.Length);
+            fs.Close();
             logger.Info("write temp done");
         }
 
