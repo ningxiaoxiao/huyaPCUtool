@@ -14,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using HttpHelpers;
+using LitJson2;
 using Timer = System.Timers.Timer;
 using NLog;
 
@@ -247,9 +248,12 @@ namespace huyaPCUtool
 
             logger.Info("write temp start");
             logger.Info("count=" + dt.Rows.Count);
-            var str = "[";
 
             var lastcount = "";
+
+            var jw = new JsonWriter();
+            jw.WriteArrayStart();
+
 
             foreach (DataRow r in dt.Rows)
             {
@@ -257,18 +261,98 @@ namespace huyaPCUtool
 
                 //去重
                 if (livecount != lastcount)
-                    str += $"['{r["timesamp"]}',{livecount},'{r["nick"]}',{r["activitycount"]},{r["totalcount"]},'{r["title"]}'],";
+                {
+
+
+                    jw.WriteObjectStart();
+
+                    jw.WritePropertyName("timesamp");
+                    jw.Write(r["timesamp"].ToString());
+
+                    jw.WritePropertyName("livecount");
+                    jw.Write(r["livecount"].ToString());
+
+
+                    jw.WritePropertyName("nick");
+                    jw.Write(r["nick"].ToString());
+
+
+                    jw.WritePropertyName("activitycount");
+                    jw.Write(r["activitycount"].ToString());
+
+
+                    jw.WritePropertyName("totalcount");
+                    jw.Write(r["totalcount"].ToString());
+
+
+                    jw.WritePropertyName("title");
+                    jw.Write(r["title"].ToString());
+
+
+
+                    jw.WriteObjectEnd();
+
+                }
+
+                lastcount = livecount;
+
+
+
             }
-            str += "]";
+            jw.WriteArrayEnd();
+
             logger.Info("add done");
 
-            var fs = File.Create("tmep.txt");
-            var bs = Encoding.UTF8.GetBytes(str);
+            var fs = File.Create("data.json");
+            var bs = Encoding.UTF8.GetBytes(jw.ToString());
             fs.Write(bs, 0, bs.Length);
             fs.Close();
-            logger.Info("write temp done");
+            logger.Info("write json done");
         }
 
+        private void button2_Click(object sender, EventArgs e)
+        {
+            var dt = GetSql("SELECT * FROM rec");
+            var jw = new JsonWriter();
+            jw.WriteArrayStart();
+
+            var lasttime = "";
+
+            foreach (DataRow r in dt.Rows)
+            {
+
+
+                if (r["timesamp"].ToString() == lasttime)
+                    continue;
+
+
+                if (r["totalcount"].ToString()=="")
+                    continue;
+
+                jw.WriteObjectStart();
+
+                jw.WritePropertyName("timesamp");
+                jw.Write(r["timesamp"].ToString());
+
+
+
+                jw.WritePropertyName("totalcount");
+                jw.Write(r["totalcount"].ToString());
+
+
+                jw.WriteObjectEnd();
+                lasttime = r["timesamp"].ToString();
+
+            }
+            jw.WriteArrayEnd();
+
+            var fs = File.Create("data2.json");
+            var bs = Encoding.UTF8.GetBytes(jw.ToString());
+            fs.Write(bs, 0, bs.Length);
+            fs.Close();
+
+
+        }
     }
 
     public struct rec
